@@ -2,14 +2,12 @@
 
 import { useState, useEffect } from "react";
 import { ethers } from "ethers";
-import Link from "next/link";
-import WalletConnection from "../components/WalletConnection";
-import CreateCollection from "../components/CreateCollection";
-import MintForm from "../components/MintForm";
+import Marketplace from "../../components/Marketplace";
+import WalletConnection from "../../components/WalletConnection";
 
-export default function Home() {
-  const [signer, setSigner] = useState<any>(null);
+export default function MarketplacePage() {
   const [userAddress, setUserAddress] = useState<string>("");
+  const [signer, setSigner] = useState<any>(null);
 
   useEffect(() => {
     const connectWallet = async () => {
@@ -37,28 +35,12 @@ export default function Home() {
 
   return (
     <main className="max-w-7xl mx-auto p-4">
-      <div className="flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-bold">NFT Creator Dashboard</h1>
-        <Link
-          href="/marketplace"
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          Go to Marketplace
-        </Link>
-      </div>
-
       <WalletConnection
         walletConnected={signer !== null}
         userAddress={userAddress}
         onConnect={handleAccountsChanged}
       />
-
-      {signer !== null && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 my-8">
-          <CreateCollection />
-          <MintForm signer={signer} userAddress={userAddress} />
-        </div>
-      )}
+      {signer !== null && <Marketplace userAddress={userAddress} />}
     </main>
   );
 }

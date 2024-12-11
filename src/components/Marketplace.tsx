@@ -1,271 +1,186 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { ethers } from "ethers";
 import Image from "next/image";
+import { formatEther } from "ethers";
+import Link from "next/link";
 
-const factoryAddress = process.env.NEXT_PUBLIC_FACTORY_ADDRESS; // Use environment variable
-const marketplaceAddress = process.env.NEXT_PUBLIC_MARKETPLACE_ADDRESS; // Use environment variable
+const factoryAddress = process.env.NEXT_PUBLIC_FACTORY_ADDRESS;
+const marketplaceAddress = process.env.NEXT_PUBLIC_MARKETPLACE_ADDRESS;
 
-// Define the fetchCollections function
-async function fetchCollections() {
-  try {
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    const signer = await provider.getSigner();
-    const factoryAbi = await fetch("/abi/NFTCollectionFactory.json").then(
-      (res) => res.json()
-    );
-    const factoryContract = new ethers.Contract(
-      factoryAddress, // Use the variable here
-      factoryAbi,
-      signer
-    );
-    if (!factoryContract) {
-      throw new Error("Factory contract is not initialized");
-    }
-    const collections = await factoryContract.getAllCollections();
-    return collections;
-  } catch (error) {
-    console.error("Error fetching collections:", error);
-    throw error; // Rethrow the error for handling in the calling function
-  }
+interface CollectionInfo {
+  name: string;
+  symbol: string;
+  collectionAddress: string;
+  owner: string;
+  createdAt: number;
 }
 
-export default function Marketplace({ userAddress }) {
-  const [marketplaceNFTs, setMarketplaceNFTs] = useState([]);
-  const [userNFTs, setUserNFTs] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [listingPrices, setListingPrices] = useState({});
+interface NFTInfo {
+  tokenId: number;
+  owner: string;
+  tokenURI: string;
+}
 
-  const fetchMarketplaceNFTs = async () => {
+interface CollectionNFTs {
+  nfts: NFTInfo[];
+}
+
+// Add new interface for listed NFTs
+interface ListedNFT {
+  nftContract: string;
+  tokenId: number;
+  price: bigint;
+  seller: string;
+}
+
+interface MarketplaceProps {
+  userAddress: string;
+}
+
+export default function Marketplace({ userAddress }: MarketplaceProps) {
+  const [collections, setCollections] = useState<CollectionInfo[]>([]);
+  const [collectionNFTs, setCollectionNFTs] = useState<{
+    [collectionAddress: string]: CollectionNFTs;
+  }>({});
+  const [loading, setLoading] = useState(true);
+  const [factoryABI, setFactoryABI] = useState<any>(null);
+  const [collectionABI, setCollectionABI] = useState<any>(null);
+  const [marketplaceABI, setMarketplaceABI] = useState<any>(null);
+  const [listedNFTs, setListedNFTs] = useState<ListedNFT[]>([]);
+  const [listingPrices, setListingPrices] = useState<{ [key: string]: number }>(
+    {}
+  );
+  const [imageUrls, setImageUrls] = useState<{ [key: string]: string }>({});
+
+  // Fetch ABIs
+  const fetchABIs = useCallback(async () => {
     try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
+      const [factoryResponse, collectionResponse, marketplaceResponse] =
+        await Promise.all([
+          fetch("/abi/NFTCollectionFactory.json"),
+          fetch("/abi/NFTCollection.json"),
+          fetch("/abi/NFTMarketplace.json"),
+        ]);
 
-      const marketplaceAbi = await fetch("/abi/NFTMarketplace.json").then(
-        (res) => res.json()
-      );
-      const marketplaceContract = new ethers.Contract(
-        marketplaceAddress,
-        marketplaceAbi,
-        signer
-      );
+      const [factoryAbi, collectionAbi, marketplaceAbi] = await Promise.all([
+        factoryResponse.json(),
+        collectionResponse.json(),
+        marketplaceResponse.json(),
+      ]);
 
-      const collections = await fetchCollections();
-      const plainCollections = collections.map((collection) => ({
-        name: collection.name,
-        symbol: collection.symbol,
-        collectionAddress: collection.collectionAddress,
-        owner: collection.owner,
-        createdAt: collection.createdAt,
-      }));
-
-      console.log("Plain collections:", plainCollections);
-
-      // Fetch NFTs for each collection
-      const allMarketplaceNFTs = await Promise.all(
-        plainCollections.map(async (collection) => {
-          const nftAbi = await fetch("/abi/NFTCollection.json").then((res) =>
-            res.json()
-          );
-          const nftContract = new ethers.Contract(
-            collection.collectionAddress,
-            nftAbi,
-            signer
-          );
-
-          const mintedNFTs = await nftContract.getAllNFTs();
-          const processedNFTs = await Promise.all(
-            mintedNFTs.map(async (nft) => {
-              const currentOwner = await nftContract.ownerOf(nft.tokenId);
-              const isListed =
-                currentOwner.toLowerCase() === marketplaceAddress.toLowerCase();
-
-              let price = BigInt(0);
-              let seller = ethers.ZeroAddress;
-
-              if (isListed) {
-                const filter = marketplaceContract.filters.NFTListed(
-                  collection.collectionAddress,
-                  nft.tokenId
-                );
-                const events = await marketplaceContract.queryFilter(filter);
-                if (events.length > 0) {
-                  const latestListing = events[events.length - 1];
-                  price = latestListing.args?.price || BigInt(0);
-                  seller = latestListing.args?.seller || ethers.ZeroAddress;
-                }
-              }
-
-              return {
-                tokenId: nft.tokenId,
-                owner: currentOwner,
-                price,
-                isListed,
-                seller,
-              };
-            })
-          );
-
-          return { ...collection, nfts: processedNFTs };
-        })
-      );
-
-      console.log("All marketplace NFTs with collections:", allMarketplaceNFTs);
-      setMarketplaceNFTs(allMarketplaceNFTs);
+      setFactoryABI(factoryAbi);
+      setCollectionABI(collectionAbi);
+      setMarketplaceABI(marketplaceAbi);
     } catch (error) {
-      console.error("Error fetching marketplace NFTs:", error);
+      console.error("Error fetching ABIs:", error);
     }
-  };
+  }, []);
 
-  const fetchUserNFTs = async () => {
+  // Add function to fetch NFTs for a collection
+  const fetchCollectionNFTs = useCallback(
+    async (provider: ethers.Provider, collectionAddress: string) => {
+      if (!collectionABI) return { nfts: [] };
+
+      try {
+        const collection = new ethers.Contract(
+          collectionAddress,
+          collectionABI,
+          provider
+        );
+
+        // Get all NFTs from the collection
+        const nfts = await collection.getAllNFTs();
+        return { nfts };
+      } catch (error) {
+        console.error(
+          `Error fetching NFTs for collection ${collectionAddress}:`,
+          error
+        );
+        return { nfts: [] };
+      }
+    },
+    [collectionABI]
+  );
+
+  // Update fetchCollections
+  const fetchCollections = useCallback(async () => {
+    if (!factoryABI) return;
+
     try {
-      setIsLoading(true);
-      setError(null);
+      if (typeof window.ethereum === "undefined") {
+        throw new Error("Please install MetaMask to use this feature");
+      }
 
+      await window.ethereum.request({ method: "eth_requestAccounts" });
       const provider = new ethers.BrowserProvider(window.ethereum);
-      const signer = await provider.getSigner();
 
-      const collections = await fetchCollections();
-      const plainCollections = collections.map((proxyResult) =>
-        proxyResult.toObject()
-      );
-      console.log("Converted collections:", plainCollections);
-
-      const nftAbi = await fetch("/abi/NFTCollection.json").then((res) =>
-        res.json()
-      );
-      const marketplaceAbi = await fetch("/abi/NFTMarketplace.json").then(
-        (res) => res.json()
-      );
-
-      const marketplaceContract = new ethers.Contract(
-        marketplaceAddress,
-        marketplaceAbi,
-        signer
-      );
-
-      const processedCollections = await Promise.all(
-        collections.map(async (collection) => {
-          const collectionAddress = collection[2];
-          const collectionName = collection[0];
-
-          const nftContract = new ethers.Contract(
-            collectionAddress,
-            nftAbi,
-            signer
-          );
-
-          const mintedNFTs = await nftContract.getAllNFTs();
-
-          const processedNFTs = await Promise.all(
-            mintedNFTs.map(async (nft) => {
-              const metadata = await fetchNFTMetadata(
-                collectionAddress,
-                nft.tokenId
-              );
-              const isListed = nft.owner === marketplaceAddress;
-              let price = BigInt(0);
-              let seller = ethers.ZeroAddress;
-
-              if (isListed) {
-                try {
-                  const filter = marketplaceContract.filters.NFTListed(
-                    collectionAddress,
-                    nft.tokenId
-                  );
-                  const events = await marketplaceContract.queryFilter(filter);
-                  if (events.length > 0) {
-                    const latestListing = events[
-                      events.length - 1
-                    ] as ethers.EventLog;
-                    price = latestListing.args?.[2] || BigInt(0);
-                    seller = latestListing.args?.[3] || ethers.ZeroAddress;
-                  }
-                } catch (err) {
-                  console.error("Error fetching listing details:", err);
-                }
-              }
-
-              return {
-                tokenId: nft.tokenId,
-                owner: nft.owner,
-                tokenURI: nft.tokenURI,
-                metadata,
-                isListed,
-                price,
-                seller,
-              };
-            })
-          );
-
-          return {
-            name: collectionName,
-            address: collectionAddress,
-            nfts: processedNFTs,
-          };
-        })
-      );
-
-      setUserNFTs(processedCollections);
-    } catch (err) {
-      console.error("Error in fetchUserNFTs:", err);
-      setError("Failed to fetch NFTs");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const fetchNFTMetadata = async (nftContractAddress, tokenId) => {
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum);
-      const nftContract = new ethers.Contract(
-        nftContractAddress,
-        [
-          "function tokenURI(uint256) view returns (string)",
-          "function ownerOf(uint256) view returns (address)",
-        ],
+      const factory = new ethers.Contract(
+        factoryAddress!,
+        factoryABI,
         provider
       );
 
-      let tokenURI = await nftContract.tokenURI(tokenId);
+      const allCollections = await factory.getAllCollections();
+      setCollections(allCollections);
 
-      // If tokenURI is already a JSON string
-      if (tokenURI.startsWith("{")) {
-        return JSON.parse(tokenURI);
+      // Fetch NFTs for each collection
+      const nftsMap: { [key: string]: CollectionNFTs } = {};
+      for (const collection of allCollections) {
+        const collectionData = await fetchCollectionNFTs(
+          provider,
+          collection.collectionAddress
+        );
+        nftsMap[collection.collectionAddress] = collectionData;
       }
-
-      // Handle IPFS URLs
-      if (tokenURI.startsWith("ipfs://")) {
-        tokenURI = `https://ipfs.io/ipfs/${tokenURI.slice(7)}`;
-      }
-
-      const response = await fetch(tokenURI);
-      if (!response.ok)
-        throw new Error(`HTTP error! status: ${response.status}`);
-      const metadata = await response.json();
-
-      // Handle IPFS image URLs
-      if (metadata.image?.startsWith("ipfs://")) {
-        metadata.image = `https://ipfs.io/ipfs/${metadata.image.slice(7)}`;
-      }
-
-      return metadata;
-    } catch (err) {
-      console.error("Error in fetchNFTMetadata:", err);
-      return null;
+      setCollectionNFTs(nftsMap);
+    } catch (error) {
+      console.error("Error fetching collections:", error);
+      setCollections([]);
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [factoryABI, fetchCollectionNFTs]);
 
-  const handlePriceChange = (tokenId, value) => {
-    setListingPrices((prev) => ({
-      ...prev,
-      [tokenId]: value > 0 ? value : 0,
-    }));
-  };
+  // Add function to fetch listed NFTs
+  // Add function to fetch listed NFTs
+  const fetchListedNFTs = useCallback(async () => {
+    if (!marketplaceABI) return;
 
-  const listNFT = async (nftContractAddress, tokenId) => {
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const marketplace = new ethers.Contract(
+        marketplaceAddress!,
+        marketplaceABI,
+        provider
+      );
+
+      const [nftContracts, tokenIds, prices, sellers] =
+        await marketplace.getAllListedNFTs();
+
+      // Create a Map to ensure uniqueness
+      const uniqueListedNFTs = new Map<string, ListedNFT>();
+
+      nftContracts.forEach((contract: string, index: number) => {
+        const key = `${contract}-${tokenIds[index]}`;
+        uniqueListedNFTs.set(key, {
+          nftContract: contract,
+          tokenId: Number(tokenIds[index]),
+          price: prices[index],
+          seller: sellers[index],
+        });
+      });
+
+      // Convert the Map back to an array and set it to state
+      setListedNFTs(Array.from(uniqueListedNFTs.values()));
+    } catch (error) {
+      console.error("Error fetching listed NFTs:", error);
+    }
+  }, [marketplaceABI]);
+
+  // Add function to list NFT for sale
+  const listNFTForSale = async (collectionAddress: string, tokenId: number) => {
     try {
       const priceInEth = listingPrices[tokenId];
       if (!priceInEth || priceInEth <= 0) {
@@ -283,7 +198,7 @@ export default function Marketplace({ userAddress }) {
 
       // Approve marketplace
       const nftContract = new ethers.Contract(
-        nftContractAddress,
+        collectionAddress,
         ["function approve(address to, uint256 tokenId) public"],
         signer
       );
@@ -293,24 +208,20 @@ export default function Marketplace({ userAddress }) {
       await approveTx.wait();
 
       // List NFT
-      const marketplaceAbi = await fetch("/abi/NFTMarketplace.json").then(
-        (res) => res.json()
-      );
-
-      const marketplaceContract = new ethers.Contract(
-        marketplaceAddress,
-        marketplaceAbi,
+      const marketplace = new ethers.Contract(
+        marketplaceAddress!,
+        marketplaceABI,
         signer
       );
 
       console.log("Listing NFT with parameters:", {
-        nftContract: nftContractAddress,
+        nftContract: collectionAddress,
         tokenId: tokenId,
         price: priceInWei.toString(),
       });
 
-      const tx = await marketplaceContract.listNFT(
-        nftContractAddress,
+      const tx = await marketplace.listNFT(
+        collectionAddress,
         tokenId,
         priceInWei
       );
@@ -320,326 +231,280 @@ export default function Marketplace({ userAddress }) {
 
       if (receipt.status === 1) {
         alert("NFT successfully listed on the marketplace");
-        await fetchMarketplaceNFTs(); // Refresh the display
+        await fetchListedNFTs(); // Refresh the display
       }
     } catch (error) {
       console.error("Error listing NFT:", error);
-      alert("Error listing NFT: " + error.message);
+      alert("Error listing NFT: " + (error as Error).message);
     }
   };
 
-  //   const buyNFT = async (nftContractAddress, tokenId, price) => {
-  //     try {
-  //       console.log(
-  //         `Attempting to buy NFT ${tokenId} with price: ${ethers.formatEther(
-  //           price.toString()
-  //         )} ETH`
-  //       );
-
-  //       if (!price || price <= BigInt(0)) {
-  //         console.error("Invalid price detected:", price);
-  //         alert("Invalid price");
-  //         return;
-  //       }
-
-  //       const provider = new ethers.BrowserProvider(window.ethereum);
-  //       const signer = await provider.getSigner();
-
-  //       const marketplaceAbi = await fetch("/abi/NFTMarketplace.json").then(
-  //         (res) => res.json()
-  //       );
-
-  //       const marketplaceContract = new ethers.Contract(
-  //         marketplaceAddress,
-  //         marketplaceAbi,
-  //         signer
-  //       );
-
-  //       console.log("Buying NFT with parameters:", {
-  //         nftContract: nftContractAddress,
-  //         tokenId: tokenId,
-  //         value: price.toString(),
-  //       });
-
-  //       const tx = await marketplaceContract.buyNFT(nftContractAddress, tokenId, {
-  //         value: price,
-  //         gasLimit: 300000,
-  //       });
-
-  //       const receipt = await tx.wait();
-  //       if (receipt.status === 1) {
-  //         alert("NFT purchased successfully!");
-  //         await fetchMarketplaceNFTs();
-  //       }
-  //     } catch (error) {
-  //       console.error("Error buying NFT:", error);
-  //       alert("Error buying NFT: " + error.message);
-  //     }
-  //   };
-
-  const buyNFT = async (nftContractAddress, tokenId, price) => {
+  // Add buyNFT function
+  const buyNFT = async (
+    nftContract: string,
+    tokenId: number,
+    price: bigint
+  ) => {
     try {
-      console.log(`Starting buy process for NFT:`, {
-        contractAddress: nftContractAddress,
-        tokenId: tokenId,
-        price: ethers.parseEther(price.toString()),
-        // price: ethers.formatEther(price.toString()),
-      });
-
-      if (!price || price <= BigInt(0)) {
-        console.error("Invalid price detected:", price);
-        alert("Invalid price");
-        return;
-      }
-
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
 
-      // Get user's balance
-      const balance = await provider.getBalance(await signer.getAddress());
-      console.log(`User balance: ${ethers.formatEther(balance)} ETH`);
-
-      if (balance < price) {
-        alert("Insufficient funds to complete this purchase!");
-        return;
-      }
-
-      const marketplaceAbi = await fetch("/abi/NFTMarketplace.json").then(
-        (res) => res.json()
-      );
-
-      const marketplaceContract = new ethers.Contract(
-        marketplaceAddress,
-        marketplaceAbi,
+      const marketplace = new ethers.Contract(
+        marketplaceAddress!,
+        marketplaceABI,
         signer
       );
 
-      console.log("Executing buyNFT with parameters:", {
-        nftContract: nftContractAddress,
-        tokenId: tokenId,
-        value: price.toString(),
+      console.log("Buying NFT with parameters:", {
+        nftContract,
+        tokenId,
+        price: price.toString(),
       });
 
-      const tx = await marketplaceContract.buyNFT(nftContractAddress, tokenId, {
+      const tx = await marketplace.buyNFT(nftContract, tokenId, {
         value: price,
-        gasLimit: 300000,
       });
 
-      console.log("Buy transaction submitted:", tx.hash);
       const receipt = await tx.wait();
-      console.log("Transaction receipt:", receipt);
+      console.log("Purchase transaction receipt:", receipt);
 
       if (receipt.status === 1) {
-        alert("NFT purchased successfully!");
-        await fetchMarketplaceNFTs();
-      } else {
-        throw new Error("Transaction failed");
+        alert("NFT successfully purchased!");
+        await fetchListedNFTs(); // Refresh the listed NFTs
       }
     } catch (error) {
       console.error("Error buying NFT:", error);
-      alert("Error buying NFT: " + error.message);
+      alert("Error buying NFT: " + (error as Error).message);
     }
   };
+
   useEffect(() => {
-    fetchMarketplaceNFTs();
-    fetchUserNFTs(); // Fetch user NFTs when the component mounts
-  }, [userAddress]);
+    fetchABIs();
+  }, [fetchABIs]);
 
-  // Loading state
-  if (isLoading) {
-    return (
-      <div className="flex justify-center items-center min-h-[200px]">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
-      </div>
-    );
+  useEffect(() => {
+    if (factoryABI) {
+      fetchCollections();
+    }
+  }, [fetchCollections, factoryABI]);
+
+  useEffect(() => {
+    if (marketplaceABI) {
+      fetchListedNFTs();
+    }
+  }, [fetchListedNFTs, marketplaceABI]);
+
+  useEffect(() => {
+    const fetchAllImageUrls = async () => {
+      const urls: { [key: string]: string } = {};
+      for (const collection of collections) {
+        for (const nft of collectionNFTs[collection.collectionAddress]?.nfts ||
+          []) {
+          if (nft.tokenURI && isValidUrl(nft.tokenURI)) {
+            urls[nft.tokenId] = await fetchImageUrl(nft.tokenURI);
+          }
+        }
+      }
+      setImageUrls(urls);
+    };
+
+    fetchAllImageUrls();
+  }, [collections, collectionNFTs]);
+
+  // Function to fetch image URL from metadata if necessary
+  async function fetchImageUrl(tokenURI: string): Promise<string> {
+    try {
+      const response = await fetch(tokenURI);
+      const metadata = await response.json();
+      return metadata.image; // Assuming the image URL is stored under the 'image' key
+    } catch (error) {
+      console.error("Error fetching image URL:", error);
+      return tokenURI; // Fallback to the original URI if fetching fails
+    }
   }
 
-  // Error state
-  if (error) {
-    return (
-      <div className="text-center text-red-500 p-4">
-        <p>{error}</p>
-        <button
-          onClick={fetchUserNFTs}
-          className="mt-4 bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
-        >
-          Try Again
-        </button>
-      </div>
-    );
+  if (loading) {
+    return <div>Loading collections...</div>;
   }
 
-  // Empty state
-  if (!userNFTs.length) {
-    return (
-      <div className="text-center p-4">
-        <p>No NFTs found in any collection.</p>
-      </div>
-    );
-  }
-
-  // Render NFTs
   return (
-    <div className="my-4 p-4">
-      <h2 className="text-2xl font-bold mb-4">NFT Collections</h2>
-      {userNFTs.map((collection, collectionIndex) => (
-        <div key={collectionIndex} className="mb-8 border-b pb-4">
-          <h3 className="text-xl font-semibold mb-2">
-            {collection.name}
-            <span className="text-sm text-gray-500 ml-2">
-              ({collection.address})
-            </span>
-          </h3>
+    <div className="container mx-auto px-4 py-8">
+      <Link
+        href="/"
+        className="inline-flex items-center mb-6 text-blue-600 hover:text-blue-800 transition-colors"
+      >
+        <svg
+          className="w-5 h-5 mr-2"
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M10 19l-7-7m0 0l7-7m-7 7h18"
+          />
+        </svg>
+        Back to Home
+      </Link>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {collection.nfts.map((nft, nftIndex) => (
-              <div key={nftIndex} className="border p-4 rounded-lg shadow">
-                <p className="font-medium">
-                  Token ID: {nft.tokenId.toString()}
-                </p>
-                <p className="text-sm text-gray-600">
-                  Owner: {shortenAddress(nft.owner)}
-                </p>
+      <h1 className="text-3xl font-bold mb-8">NFT Marketplace</h1>
 
-                {nft.metadata?.image && (
-                  <div className="my-2">
-                    <Image
-                      src={nft.metadata.image}
-                      alt={nft.metadata.name || "NFT"}
-                      width={300}
-                      height={300}
-                      className="w-full h-48 object-cover rounded-lg"
-                    />
-                  </div>
-                )}
+      {/* NFTs for Sale Section */}
+      <section className="mb-12">
+        <h2 className="text-2xl font-bold mb-6 border-b pb-2">NFTs for Sale</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+          {listedNFTs.length === 0 ? (
+            <p className="text-gray-500 col-span-full">
+              No NFTs currently listed for sale
+            </p>
+          ) : (
+            listedNFTs.map((nft, index) => (
+              <div
+                key={index}
+                className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow"
+              >
+                <div className="mb-3">
+                  <p className="font-semibold">Token ID: {nft.tokenId}</p>
+                  <p className="text-sm text-gray-600 truncate">
+                    From: {nft.nftContract}
+                  </p>
+                  <p className="text-lg font-medium text-blue-600 my-2">
+                    {formatEther(nft.price)} ETH
+                  </p>
+                  <p className="text-sm text-gray-500 truncate">
+                    Seller: {nft.seller}
+                  </p>
+                </div>
 
-                {/* Show listing UI if user is the owner and NFT is not listed */}
-                {nft.owner.toLowerCase() === userAddress?.toLowerCase() &&
-                  !nft.isListed && (
-                    <div className="mt-4">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="number"
-                          step="0.001"
-                          min="0"
-                          placeholder="Price in ETH"
-                          className="border rounded px-2 py-1 w-full"
-                          onChange={(e) =>
-                            handlePriceChange(
-                              nft.tokenId,
-                              parseFloat(e.target.value)
-                            )
-                          }
-                        />
-                        <button
-                          onClick={() =>
-                            listNFT(collection.address, nft.tokenId)
-                          }
-                          className={`px-4 py-1 rounded ${
-                            listingPrices[nft.tokenId] > 0
-                              ? "bg-blue-500 text-white hover:bg-blue-600"
-                              : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          }`}
-                          disabled={
-                            !listingPrices[nft.tokenId] ||
-                            listingPrices[nft.tokenId] <= 0
-                          }
-                        >
-                          List
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                {/* Show price and buy button if NFT is listed */}
-                {nft.isListed && (
-                  <div className="mt-4">
-                    <p className="text-lg font-semibold">
-                      Price: {ethers.formatEther(nft.price.toString())} ETH
-                    </p>
-                    <button
-                      onClick={() => {
-                        console.log("Buy button clicked for NFT:", {
-                          tokenId: nft.tokenId,
-                          collectionAddress: nft.collectionAddress,
-                          listedPrice:
-                            ethers.formatEther(nft.price.toString()) + " ETH",
-                          rawListedPrice: nft.price.toString(),
-                          seller: nft.seller,
-                        });
-
-                        console.log("Attempting purchase with:", {
-                          purchasePrice:
-                            ethers.formatEther(nft.price.toString()) + " ETH",
-                          rawPurchasePrice: nft.price.toString(),
-                          inWei: nft.price,
-                        });
-
-                        buyNFT(nft.collectionAddress, nft.tokenId, nft.price);
-                      }}
-                      className="bg-green-500 text-white px-4 py-2 rounded mt-2 w-full hover:bg-green-600"
-                      disabled={
-                        nft.seller.toLowerCase() === userAddress?.toLowerCase()
-                      }
-                    >
-                      Buy NFT
-                    </button>
-                  </div>
+                {nft.seller.toLowerCase() !==
+                  window.ethereum?.selectedAddress?.toLowerCase() && (
+                  <button
+                    onClick={() =>
+                      buyNFT(nft.nftContract, nft.tokenId, nft.price)
+                    }
+                    className="w-full bg-green-500 text-white py-2 px-4 rounded hover:bg-green-600 transition-colors"
+                  >
+                    Buy Now
+                  </button>
                 )}
               </div>
-            ))}
-          </div>
-
-          <div>
-            {marketplaceNFTs.map((collection, index) => (
-              <div key={index} className="collection">
-                <h3>
-                  {collection.name} ({collection.symbol})
-                </h3>
-                <p>Address: {collection.collectionAddress}</p>
-                <p>Owner: {collection.owner}</p>
-
-                {collection.nfts && collection.nfts.length > 0 ? (
-                  <div className="nfts">
-                    {collection.nfts.map((nft) => (
-                      <div key={nft.tokenId} className="nft">
-                        <p>Token ID: {nft.tokenId}</p>
-                        <p>Owner: {nft.owner}</p>
-                        {nft.isListed && (
-                          <>
-                            <p>
-                              Price: {ethers.formatEther(nft.price.toString())}{" "}
-                              ETH
-                            </p>
-                            <button
-                              onClick={() =>
-                                buyNFT(
-                                  collection.collectionAddress,
-                                  nft.tokenId,
-                                  nft.price
-                                )
-                              }
-                            >
-                              Buy Now
-                            </button>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No NFTs found in this collection.</p>
-                )}
-              </div>
-            ))}
-          </div>
+            ))
+          )}
         </div>
-      ))}
+      </section>
+
+      {/* Collections Section */}
+      <section>
+        <h2 className="text-2xl font-bold mb-6 border-b pb-2">
+          NFT Collections
+        </h2>
+        <div className="space-y-8">
+          {collections.map((collection) => (
+            <div
+              key={collection.collectionAddress}
+              className="bg-white border rounded-lg p-6 shadow-sm"
+            >
+              {/* Collection Header */}
+              <div className="mb-6">
+                <h3 className="text-xl font-bold">{collection.name}</h3>
+                <div className="mt-2 space-y-1">
+                  <p className="text-sm text-gray-600">
+                    Symbol: {collection.symbol}
+                  </p>
+                  <p className="text-sm text-gray-500 truncate">
+                    Address: {collection.collectionAddress}
+                  </p>
+                </div>
+              </div>
+
+              {/* Collection NFTs */}
+              <div className="mt-4">
+                <h4 className="text-lg font-semibold mb-4">Collection NFTs</h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  {collectionNFTs[collection.collectionAddress]?.nfts.length ===
+                  0 ? (
+                    <p className="text-gray-500 col-span-full">
+                      No NFTs in this collection
+                    </p>
+                  ) : (
+                    collectionNFTs[collection.collectionAddress]?.nfts.map(
+                      (nft) => (
+                        <div
+                          key={nft.tokenId.toString()}
+                          className="border rounded-lg p-4 bg-gray-50 hover:bg-gray-100 transition-colors"
+                        >
+                          {/* Display NFT Image if tokenURI is a valid URL */}
+                          {imageUrls[nft.tokenId] && (
+                            <Image
+                              src={imageUrls[nft.tokenId]}
+                              alt={`NFT ${nft.tokenId}`}
+                              width={200}
+                              height={200}
+                              className="mb-3 rounded"
+                            />
+                          )}
+                          <p className="font-medium">
+                            Token ID: {nft.tokenId.toString()}
+                          </p>
+                          <p className="text-sm text-gray-600 truncate">
+                            Owner: {nft.owner}
+                          </p>
+                          <p className="text-xs text-gray-500 truncate mb-3">
+                            URI: {nft.tokenURI}
+                          </p>
+
+                          {nft.owner.toLowerCase() ===
+                            window.ethereum?.selectedAddress?.toLowerCase() && (
+                            <div className="mt-3 space-y-2">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min="0"
+                                placeholder="Price in ETH"
+                                className="w-full p-2 border rounded text-sm"
+                                onChange={(e) =>
+                                  setListingPrices({
+                                    ...listingPrices,
+                                    [nft.tokenId]: parseFloat(e.target.value),
+                                  })
+                                }
+                                value={listingPrices[nft.tokenId] || ""}
+                              />
+                              <button
+                                onClick={() =>
+                                  listNFTForSale(
+                                    collection.collectionAddress,
+                                    nft.tokenId
+                                  )
+                                }
+                                className="w-full bg-blue-500 text-white py-1.5 px-4 rounded text-sm hover:bg-blue-600 transition-colors"
+                              >
+                                List for Sale
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    )
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
 
-// Helper function to shorten addresses
-const shortenAddress = (address: string) => {
-  return `${address.slice(0, 6)}...${address.slice(-4)}`;
-};
+// Helper function to validate URLs
+function isValidUrl(url: string) {
+  try {
+    new URL(url);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}

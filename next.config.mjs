@@ -16,7 +16,8 @@ const nextConfig = {
         protocol: 'https',
         hostname: 'nftstorage.link',
         pathname: '/**',
-      }
+      },
+      // Add any other domains you need to allow
     ],
   },
 };

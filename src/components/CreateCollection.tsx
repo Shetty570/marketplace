@@ -8,8 +8,15 @@ const factoryAddress = process.env.NEXT_PUBLIC_FACTORY_ADDRESS;
 export default function CreateCollection() {
   const [collectionName, setCollectionName] = useState("");
   const [collectionSymbol, setCollectionSymbol] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleCreateCollection = async () => {
+    if (!collectionName || !collectionSymbol) {
+      alert("Please fill in all fields");
+      return;
+    }
+
+    setIsLoading(true);
     try {
       const provider = new ethers.BrowserProvider(window.ethereum);
       const signer = await provider.getSigner();
@@ -17,7 +24,7 @@ export default function CreateCollection() {
         (res) => res.json()
       );
       const factoryContract = new ethers.Contract(
-        factoryAddress,
+        factoryAddress!,
         factoryAbi,
         signer
       );
@@ -27,36 +34,56 @@ export default function CreateCollection() {
         collectionSymbol
       );
       await tx.wait();
-
       alert("Collection created successfully!");
+      setCollectionName("");
+      setCollectionSymbol("");
     } catch (err) {
       console.error("Error creating collection:", err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="my-4 p-4 border rounded">
-      <h2>Create NFT Collection</h2>
-      <input
-        type="text"
-        placeholder="Collection Name"
-        value={collectionName}
-        onChange={(e) => setCollectionName(e.target.value)}
-        className="block mb-2 px-2 py-1 border rounded"
-      />
-      <input
-        type="text"
-        placeholder="Collection Symbol"
-        value={collectionSymbol}
-        onChange={(e) => setCollectionSymbol(e.target.value)}
-        className="block mb-2 px-2 py-1 border rounded"
-      />
-      <button
-        className="px-4 py-2 bg-green-500 text-white rounded"
-        onClick={handleCreateCollection}
-      >
-        Create Collection
-      </button>
+    <div className="max-w-md mx-auto bg-white rounded-xl shadow-md overflow-hidden md:max-w-2xl m-4">
+      <div className="p-8">
+        <div className="uppercase tracking-wide text-sm text-indigo-500 font-semibold mb-1">
+          Create New Collection
+        </div>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Collection Name
+            </label>
+            <input
+              type="text"
+              placeholder="e.g., Bored Ape Yacht Club"
+              value={collectionName}
+              onChange={(e) => setCollectionName(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Collection Symbol
+            </label>
+            <input
+              type="text"
+              placeholder="e.g., BAYC"
+              value={collectionSymbol}
+              onChange={(e) => setCollectionSymbol(e.target.value)}
+              className="mt-1 block w-full px-3 py-2 bg-white border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
+            />
+          </div>
+          <button
+            onClick={handleCreateCollection}
+            disabled={isLoading}
+            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:bg-gray-400"
+          >
+            {isLoading ? "Creating..." : "Create Collection"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
